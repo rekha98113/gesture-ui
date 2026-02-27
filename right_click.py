@@ -1,21 +1,24 @@
 import cv2
 import mediapipe as mp
 import pyautogui
-import time
+import math
 
 screen_w, screen_h = pyautogui.size()
 
 mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(max_num_hands=1)
+hands = mp_hands.Hands(
+    max_num_hands=1,
+    min_detection_confidence=0.7,
+    min_tracking_confidence=0.7
+)
 
 cap = cv2.VideoCapture(0)
 
-prev_x, prev_y = 0, 0
-SMOOTHING = 7
+dragging = False
+right_pinch_active = False   # Track thumb-pinky pinch state
 
-last_left = 0
-last_right = 0
-DELAY = 1.0
+def distance(p1, p2):
+    return math.hypot(p2.x - p1.x, p2.y - p1.y)
 
 while True:
     success, frame = cap.read()
@@ -30,48 +33,42 @@ while True:
 
     if result.multi_hand_landmarks:
         hand = result.multi_hand_landmarks[0]
+        lm = hand.landmark
 
-        # Landmarks
-        index_tip = hand.landmark[8]
-        index_joint = hand.landmark[6]
+        thumb_tip = lm[4]
+        index_tip = lm[8]
+        pinky_tip = lm[20]
 
-        middle_tip = hand.landmark[12]
-        middle_joint = hand.landmark[10]
+        # -------- Cursor Movement --------
+        screen_x = int(index_tip.x * screen_w)
+        screen_y = int(index_tip.y * screen_h)
+        pyautogui.moveTo(screen_x, screen_y)
 
-        ring_tip = hand.landmark[16]
-        ring_joint = hand.landmark[14]
+        # -------- Distances --------
+        dist_thumb_index = distance(thumb_tip, index_tip)
+        dist_thumb_pinky = distance(thumb_tip, pinky_tip)
 
-        # Cursor movement
-        target_x = index_tip.x * screen_w
-        target_y = index_tip.y * screen_h
+        # -------- LEFT DRAG (Thumb + Index) --------
+        if dist_thumb_index < 0.05:
+            if not dragging:
+                pyautogui.mouseDown()
+                dragging = True
+        else:
+            if dragging:
+                pyautogui.mouseUp()
+                dragging = False
 
-        curr_x = prev_x + (target_x - prev_x) / SMOOTHING
-        curr_y = prev_y + (target_y - prev_y) / SMOOTHING
-        pyautogui.moveTo(curr_x, curr_y)
-        prev_x, prev_y = curr_x, curr_y
+        # -------- RIGHT CLICK (Thumb + Pinky Pinch & Release) --------
+        if dist_thumb_pinky < 0.05:
+            right_pinch_active = True   # Pinch detected
 
-        # Finger states
-        index_up = index_tip.y < index_joint.y
-        middle_up = middle_tip.y < middle_joint.y
-        ring_up = ring_tip.y < ring_joint.y
-
-        now = time.time()
-
-        # LEFT CLICK → index only
-        if index_up and not middle_up and not ring_up and (now - last_left) > DELAY:
-            pyautogui.click()
-            last_left = now
-            cv2.putText(frame, "LEFT CLICK", (20, 50),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 3)
-
-        # RIGHT CLICK → index + middle
-        elif index_up and middle_up and not ring_up and (now - last_right) > DELAY:
+        elif right_pinch_active:
+            # Release detected → trigger right click
             pyautogui.rightClick()
-            last_right = now
-            cv2.putText(frame, "RIGHT CLICK", (20, 50),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 3)
+            print("Right Click")
+            right_pinch_active = False
 
-    cv2.imshow("Virtual Mouse - Fixed Right Click", frame)
+    cv2.imshow("Gesture Mouse Control", frame)
 
     if cv2.waitKey(1) & 0xFF == 27:
         break

@@ -2,10 +2,11 @@ import cv2
 import mediapipe as mp
 import pyautogui
 import math
-import time
 
+# Get screen size
 screen_w, screen_h = pyautogui.size()
 
+# Initialize MediaPipe Hands
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(
     max_num_hands=1,
@@ -15,8 +16,16 @@ hands = mp_hands.Hands(
 
 cap = cv2.VideoCapture(0)
 
-last_click_time = 0
-CLICK_DELAY = 0.8  # seconds
+# States
+dragging = False
+pinch_active = False
+
+# Thresholds
+PINCH_THRESHOLD = 0.05
+DRAG_THRESHOLD = 0.04
+
+def distance(p1, p2):
+    return math.hypot(p2.x - p1.x, p2.y - p1.y)
 
 while True:
     success, frame = cap.read()
@@ -31,35 +40,39 @@ while True:
 
     if result.multi_hand_landmarks:
         hand = result.multi_hand_landmarks[0]
+        lm = hand.landmark
 
-        # Index finger
-        index_tip = hand.landmark[8]
-        ix, iy = int(index_tip.x * w), int(index_tip.y * h)
+        thumb_tip = lm[4]
+        index_tip = lm[8]
 
-        # Thumb
-        thumb_tip = hand.landmark[4]
-        tx, ty = int(thumb_tip.x * w), int(thumb_tip.y * h)
+        # Move cursor using index finger
+        screen_x = int(index_tip.x * screen_w)
+        screen_y = int(index_tip.y * screen_h)
+        pyautogui.moveTo(screen_x, screen_y)
 
-        # Move mouse
-        pyautogui.moveTo(
-            int(index_tip.x * screen_w),
-            int(index_tip.y * screen_h)
-        )
+        dist = distance(thumb_tip, index_tip)
 
-        # Distance between thumb & index
-        distance = math.hypot(ix - tx, iy - ty)
+        # -------- Drag (Hold Strong Pinch) --------
+        if dist < DRAG_THRESHOLD:
+            if not dragging:
+                pyautogui.mouseDown()
+                dragging = True
 
-        # Draw points
-        cv2.circle(frame, (ix, iy), 8, (0, 255, 0), -1)
-        cv2.circle(frame, (tx, ty), 8, (0, 0, 255), -1)
+        else:
+            if dragging:
+                pyautogui.mouseUp()
+                dragging = False
 
-        # Click condition
-        current_time = time.time()
-        if distance < 30 and (current_time - last_click_time) > CLICK_DELAY:
+        # -------- Left Click (Pinch + Release) --------
+        if dist < PINCH_THRESHOLD and not dragging:
+            pinch_active = True
+
+        elif pinch_active:
             pyautogui.click()
-            last_click_time = current_time
+            print("Left Click")
+            pinch_active = False
 
-    cv2.imshow("STEP 4 - Move + Click", frame)
+    cv2.imshow("Left Click Control", frame)
 
     if cv2.waitKey(1) & 0xFF == 27:
         break
